@@ -65,7 +65,7 @@ DEFAULT_RESEARCH_PROMPT = SystemPrompt(
         "   each insight to the Manus turns that produced it.\n\n"
         "MANUS TURN SCHEMA\n"
         "Thought: short rationale for the chosen action.\n"
-        "Action: `MANUS::{verb}` followed by the virtual operation (e.g.,"
+        "Action: `MANUS::VERB` followed by the virtual operation (e.g.,"
         " `MANUS::INVESTIGATE – query trade filings for lithium suppliers`).\n"
         "Observation: bullet list of concrete facts, stats, or quotes gathered"
         " this turn. Mention the notional source (e.g., '2024 UN energy report').\n"
