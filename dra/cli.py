@@ -43,6 +43,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--system-prompt", help="Path to a custom system prompt template")
     parser.add_argument("--max-iterations", type=int, default=8)
     parser.add_argument("--reflection-interval", type=int, default=2)
+    parser.add_argument(
+        "--silent-stages",
+        action="store_true",
+        help="Disable printing of intermediate Skywork/Manus workflow artefacts",
+    )
 
     llm_group = parser.add_mutually_exclusive_group(required=False)
     llm_group.add_argument("--mock", action="store_true", help="Use the offline echo client")
@@ -69,7 +74,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     base_agent.base_agent.system_prompt = system_prompt
     base_agent.base_agent.config = base_agent_config
 
-    result = base_agent.run(args.task, context=context_data)
+    observer = None
+    if not args.silent_stages:
+        def observer(stage: str, payload: dict[str, object]) -> None:
+            print(f"[{stage.upper()}]")
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    result = base_agent.run(args.task, context=context_data, observer=observer)
     print(result)
     return 0
 

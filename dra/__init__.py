@@ -4,7 +4,12 @@ from .agent import Agent
 from .memory import Memory
 from .llm import LLMClient, OpenAIClient, LangChainClient
 from .prompts import SystemPrompt, DEFAULT_RESEARCH_PROMPT
-from .research import DeepResearchAgent, create_default_deep_research_agent
+from .research import (
+    DeepResearchAgent,
+    ManusTurn,
+    ResearchState,
+    create_default_deep_research_agent,
+)
 
 __all__ = [
     "Agent",
@@ -15,5 +20,7 @@ __all__ = [
     "SystemPrompt",
     "DEFAULT_RESEARCH_PROMPT",
     "DeepResearchAgent",
+    "ManusTurn",
+    "ResearchState",
     "create_default_deep_research_agent",
 ]

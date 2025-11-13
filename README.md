@@ -2,9 +2,10 @@
 
 This repository contains a lightweight yet extensible agent framework inspired by
 [SkyworkAI/DeepResearchAgent](https://github.com/SkyworkAI/DeepResearchAgent),
-[InternLM/lagent](https://github.com/InternLM/lagent), and the agent design in OpenHand.
-The goal is to provide a batteries-included research agent loop without relying on
-heavy orchestration libraries (e.g. LangChain Agents, HuggingFace smolagents).
+[InternLM/lagent](https://github.com/InternLM/lagent), the OpenHand ecosystem, and the
+OpenManus/OWL interaction style. The goal is to provide a batteries-included research
+agent loop without relying on heavy orchestration libraries (e.g. LangChain Agents,
+HuggingFace smolagents).
 
 ## Key Features
 
@@ -15,9 +16,10 @@ heavy orchestration libraries (e.g. LangChain Agents, HuggingFace smolagents).
   remaining serialisation-friendly for API calls.
 - **Pluggable LLM backends** – Use the OpenAI SDK, a LangChain chat model, or the
   offline echo client for testing.
-- **Deep research specialisation** – `dra.research.DeepResearchAgent` adds a
-  planning phase, scoring rubric, and context injection to emulate the
-  Skywork-style deep research workflow.
+- **Deep research specialisation** – `dra.research.DeepResearchAgent` now mirrors the
+  Skywork DeepResearch outer loop with Manus/OWL stages: mission analysis, plan
+  drafting, Manus-style action/observation loops, synthesis, and a final reporting
+  pass that leverages the configurable base agent system prompt.
 - **Customisable prompts** – `dra.prompts.SystemPrompt` makes it easy to swap
   or templatise system prompts at runtime.
 - **Command line interface** – `python -m dra.cli` offers a quick way to execute
@@ -40,9 +42,10 @@ python -m dra.cli "Research the latest advancements in quantum error correction"
     --mock
 ```
 
+The CLI streams each stage (analysis, plan, Manus turns, synthesis) to stdout so you
+can follow the workflow. Use `--silent-stages` to suppress the intermediate artefacts.
 Replace `--mock` with either `--openai-model gpt-4o-mini` or `--langchain <model>`
-if you have the respective dependencies installed and API credentials
-configured.
+if you have the respective dependencies installed and API credentials configured.
 
 To provide extra context or a custom prompt:
 
@@ -66,7 +69,14 @@ client = LangChainClient(chat_model=...)  # e.g. langchain.chat_models.init_chat
 agent = create_default_deep_research_agent(client)
 agent.base_agent.config = AgentConfig(max_iterations=12, reflection_interval=3)
 
-result = agent.run("Map out the competitive landscape for edge AI accelerators")
+def log_stage(stage: str, payload: dict[str, object]) -> None:
+    print(f"[{stage}]", payload)
+
+result = agent.run(
+    "Map out the competitive landscape for edge AI accelerators",
+    context=["Focus on 2023-2024 announcements"],
+    observer=log_stage,
+)
 print(result)
 ```
 
