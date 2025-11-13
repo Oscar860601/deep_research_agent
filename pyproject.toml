@@ -1,0 +1,16 @@
+[project]
+name = "deep-research-agent"
+version = "0.1.0"
+description = "Lightweight deep research agent framework"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0"]
+langchain = ["langchain>=0.1", "langchain-openai>=0.0.8"]
+
+[project.scripts]
+dra = "dra.cli:main"
