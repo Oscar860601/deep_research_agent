@@ -2,7 +2,7 @@
 
 from .agent import Agent
 from .memory import Memory
-from .llm import LLMClient, OpenAIClient, LangChainClient
+from .llm import LLMClient, OpenAIClient, AzureOpenAIClient, LangChainClient
 from .prompts import SystemPrompt, DEFAULT_RESEARCH_PROMPT
 from .research import (
     DeepResearchAgent,
@@ -16,6 +16,7 @@ __all__ = [
     "Memory",
     "LLMClient",
     "OpenAIClient",
+    "AzureOpenAIClient",
     "LangChainClient",
     "SystemPrompt",
     "DEFAULT_RESEARCH_PROMPT",

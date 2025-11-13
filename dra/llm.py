@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Mapping, Protocol
 
 from .memory import Memory
 
@@ -24,6 +24,25 @@ class OpenAIClient:
     def generate(self, memory: Memory) -> str:
         messages = memory.serialize()
         response = self.client.chat.completions.create(model=self.model, messages=messages)
+        return response.choices[0].message.content
+
+
+@dataclass
+class AzureOpenAIClient:
+    """Adapter for Azure OpenAI chat completions with endpoint/header tweaks."""
+
+    client: any
+    model: str
+    endpoint_url: str | None = None
+    extra_headers: Mapping[str, str] | None = None
+
+    def generate(self, memory: Memory) -> str:
+        messages = memory.serialize()
+        client = self.client.with_options(base_url=self.endpoint_url) if self.endpoint_url else self.client
+        params: dict[str, object] = {"model": self.model, "messages": messages}
+        if self.extra_headers:
+            params["extra_headers"] = self.extra_headers
+        response = client.chat.completions.create(**params)
         return response.choices[0].message.content
 
 

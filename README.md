@@ -14,8 +14,8 @@ HuggingFace smolagents).
   produced.
 - **Flexible memory** – `dra.memory.Memory` keeps conversation state while
   remaining serialisation-friendly for API calls.
-- **Pluggable LLM backends** – Use the OpenAI SDK, a LangChain chat model, or the
-  offline echo client for testing.
+- **Pluggable LLM backends** – Use the OpenAI SDK, Azure OpenAI, a LangChain chat
+  model, or the offline echo client for testing.
 - **Deep research specialisation** – `dra.research.DeepResearchAgent` now mirrors the
   Skywork DeepResearch outer loop with Manus/OWL stages: mission analysis, plan
   drafting, Manus-style action/observation loops, synthesis, and a final reporting
@@ -101,6 +101,35 @@ result = agent.run(
 print(result)
 ```
 
+### Azure OpenAI client
+
+```python
+from openai import AzureOpenAI
+
+from dra import AzureOpenAIClient
+
+raw_client = AzureOpenAI(
+    api_key="<api-key>",
+    api_version="2024-02-01",
+    azure_endpoint="https://my-azure-resource.openai.azure.com",
+)
+
+client = AzureOpenAIClient(
+    client=raw_client,
+    model="gpt-4o-mini",
+    endpoint_url="https://custom-endpoint.openai.azure.com",
+    extra_headers={"x-ms-azureai-solution": "deep-research"},
+)
+
+agent = create_default_deep_research_agent(client)
+print(agent.run("Summarise the state of liquid cooling for data centers"))
+```
+
+`endpoint_url` lets you override the base URL on a per-call basis (useful when the
+client is shared by multiple deployments), while `extra_headers` is passed through
+to `chat.completions.create` so you can meet Azure's tracing or policy
+requirements.
+
 ## Project Structure
 
 ```
@@ -108,7 +137,7 @@ dra/
 ├── __init__.py
 ├── agent.py          # Core iteration loop
 ├── cli.py            # Command line entry point
-├── llm.py            # LLM client abstractions (OpenAI, LangChain, Echo)
+├── llm.py            # LLM client abstractions (OpenAI, Azure OpenAI, LangChain, Echo)
 ├── memory.py         # Message and memory primitives
 ├── prompts.py        # System prompt utilities
 └── research.py       # Deep research specialisation
