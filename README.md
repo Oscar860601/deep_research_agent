@@ -41,16 +41,27 @@ HuggingFace smolagents).
    source .venv/bin/activate
    ```
 
-2. **Install the framework**
+2. **Install the Python dependencies**
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+   The `requirements.txt` file mirrors the adapters supported by the framework
+   (OpenAI, Azure OpenAI via the OpenAI SDK, and LangChain chat models) so a
+   single command prepares every optional client used throughout the examples.
+
+3. **Install the framework**
 
    ```bash
    pip install -e .
    ```
 
-   This pulls in the `python-dotenv` helper so environment variables from a
-   `.env` file are automatically available everywhere the package is imported.
+   This editable install hooks the package into your environment and pulls in
+   the `python-dotenv` helper so environment variables from a `.env` file are
+   automatically available everywhere the package is imported.
 
-3. **Copy the `.env` template** and fill in at least one provider section:
+4. **Copy the `.env` template** and fill in at least one provider section:
 
    ```bash
    cp .env.example .env
