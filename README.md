@@ -37,24 +37,25 @@ pip install -e .
 
 ### Default Deep Research prompt
 
-The base agent ships with a mission prompt that blends the Skywork DeepResearch
-outer loop, the InternLM/lagent structure for disciplined actions, and the
-OpenHand / OpenManus OWL interaction model. It instructs the model to:
+The default `SystemPrompt` encodes the full Skywork/Manus/OWL doctrine so the
+model understands the entire mission contract without extra instructions. Key
+sections include:
 
-1. Capture a **Mission Intelligence** brief covering scope, stakeholders, and
-   knowledge gaps.
-2. Draft an **Operation Plan** that sequences Observe/Work/Learn phases with
-   Manus-style actions.
-3. Run **OpenManus OWL execution turns** that log Thought, Action, Observation,
-   Leads, and Status for every step.
-4. Perform **lagent-style cross-checks** to reconcile conflicts and note
-   confidence levels.
-5. Deliver a structured report with Mission Overview, Key Findings (with
-   confidence tags), Evidence Trail, Gaps & Next Steps, and a `FINAL ANSWER`.
+- **Workflow ladder** – Mission Intelligence, Hypothesis Board, Operation Plan,
+  OWL execution, cross-checks, and synthesis. Each step spells out the required
+  artifacts, minimum checkpoints, and how hypotheses tie to evidence types.
+- **Manus turn schema + example** – Thought, `MANUS::{verb}` Action, Observation
+  bullets with source handles, Leads, and Status (SUCCESS/PARTIAL/BLOCKED). The
+  example teaches the tone, granularity, and follow-up expectations.
+- **Reporting contract** – Confidence labels, transparency requirements, source
+  citations, and how to document blockers or offline assumptions.
+- **Final response template** – Mission Overview, Hypotheses & Status table,
+  numbered Key Findings with citations and implications, Evidence Trail, Gaps &
+  Next Steps, and a concluding `FINAL ANSWER` line.
 
-You can swap this prompt for another `SystemPrompt` at runtime, but the default
-is designed to closely mimic the prompts published in the Skywork, InternLM, and
-OpenHand/OpenManus projects.
+You can always provide another `SystemPrompt`, but the built-in one mirrors the
+multi-stage prompts used in production-grade deep research agents so the outer
+loop works immediately.
 
 ### CLI
 
