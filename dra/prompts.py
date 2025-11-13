@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
+
+
+_PLACEHOLDER_PATTERN = re.compile(r"\{([A-Za-z0-9_]+)\}")
 
 
 @dataclass
@@ -12,7 +16,21 @@ class SystemPrompt:
     template: str
 
     def format(self, **variables: Any) -> str:
-        return self.template.format(**variables)
+        """Render the template using {placeholder} tokens.
+
+        This avoids Python's ``str.format`` brace escaping rules so prompt
+        authors can include JSON snippets or other literal braces without
+        doubling them. Only tokens matching ``{name}`` where ``name`` is made of
+        alphanumerics/underscores are substituted.
+        """
+
+        def _replace(match: re.Match[str]) -> str:
+            key = match.group(1)
+            if key not in variables:
+                raise KeyError(key)
+            return str(variables[key])
+
+        return _PLACEHOLDER_PATTERN.sub(_replace, self.template)
 
 
 DEFAULT_RESEARCH_PROMPT = SystemPrompt(
