@@ -14,6 +14,7 @@ from .tools import Tool, ToolExecutionError, ToolRegistry, create_default_toolbo
 
 
 StageObserver = Callable[[str, dict[str, object]], None]
+PlanReviewHook = Callable[[List[str], int], Optional[str]]
 
 
 @dataclass
@@ -84,6 +85,7 @@ class DeepResearchAgent:
 
     base_agent: Agent
     tools: Sequence[Tool] = field(default_factory=create_default_toolbox)
+    max_plan_reviews: int = 5
     analysis_prompt: SystemPrompt = field(
         default_factory=lambda: SystemPrompt(
             template=(
@@ -226,13 +228,30 @@ class DeepResearchAgent:
         *,
         context: Optional[Iterable[str]] = None,
         observer: Optional[StageObserver] = None,
+        plan_reviewer: Optional[PlanReviewHook] = None,
     ) -> str:
-        """Execute the staged deep research workflow."""
+        """Execute planning and execution sequentially."""
+
+        state = self.generate_plan(
+            task,
+            context=context,
+            observer=observer,
+            plan_reviewer=plan_reviewer,
+        )
+        return self.execute_plan(state, observer=observer)
+
+    def generate_plan(
+        self,
+        task: str,
+        *,
+        context: Optional[Iterable[str]] = None,
+        observer: Optional[StageObserver] = None,
+        plan_reviewer: Optional[PlanReviewHook] = None,
+    ) -> ResearchState:
+        """Run the analysis + planning stages with optional human intervention."""
 
         state = ResearchState(task=task, context=list(context or []))
         llm = self.base_agent.llm
-        tool_registry = ToolRegistry(self.tools)
-        tool_block = _format_context(tool_registry.describe()) or "(no registered tools)"
 
         analysis_prompt = self.analysis_prompt.format(
             task=task, context=_format_context(state.context) or "(none)"
@@ -245,16 +264,44 @@ class DeepResearchAgent:
             analysis=state.analysis.strip() or "(no analysis)",
             context=_format_context(state.context) or "(none)",
         )
-        plan_response = _invoke(llm, planning_prompt, user_message="Draft the plan now.")
+        plan_memory = Memory()
+        plan_memory.add(Message(role="system", content=planning_prompt))
+        plan_memory.add(Message(role="user", content="Draft the plan now."))
+        plan_response = llm.generate(plan_memory)
+        plan_memory.add(Message(role="assistant", content=plan_response))
         state.plan = _parse_plan(plan_response)
         _emit(observer, "plan", {"steps": state.plan})
 
-        if not state.plan:
-            state.plan = ["Investigate the task thoroughly and record findings."]
+        state.plan = _facilitate_plan_review(
+            llm,
+            plan_memory,
+            state.plan,
+            plan_reviewer,
+            observer,
+            self.max_plan_reviews,
+        )
 
-        for step in state.plan:
+        if not state.plan:
+            state.plan = _default_plan()
+
+        return state
+
+    def execute_plan(
+        self,
+        state: ResearchState,
+        *,
+        observer: Optional[StageObserver] = None,
+    ) -> str:
+        """Run Manus turns, synthesis, and the base agent using an existing plan."""
+
+        llm = self.base_agent.llm
+        tool_registry = ToolRegistry(self.tools)
+        tool_block = _format_context(tool_registry.describe()) or "(no registered tools)"
+        plan_steps = _ensure_plan(state.plan)
+
+        for step in plan_steps:
             manus_prompt = self.manus_prompt.format(
-                task=task,
+                task=state.task,
                 step=step,
                 analysis=state.analysis.strip() or "(none)",
                 context=_format_context(state.context) or "(none)",
@@ -270,7 +317,7 @@ class DeepResearchAgent:
             if turn.status.lower().startswith("done"):
                 break
 
-        synthesis_prompt = self.synthesis_prompt.format(task=task)
+        synthesis_prompt = self.synthesis_prompt.format(task=state.task)
         synthesis_context = state.render_context_blocks()
         state.synthesis = _invoke(
             llm,
@@ -281,7 +328,7 @@ class DeepResearchAgent:
         _emit(observer, "synthesis", {"notes": state.synthesis})
 
         final_context = state.render_context_blocks()
-        return self.base_agent.run(task, context=final_context)
+        return self.base_agent.run(state.task, context=final_context)
 
 
 def create_default_deep_research_agent(
@@ -308,8 +355,50 @@ def _invoke(
     return llm.generate(memory)
 
 
+def _facilitate_plan_review(
+    llm: LLMClient,
+    memory: Memory,
+    steps: List[str],
+    reviewer: Optional[PlanReviewHook],
+    observer: Optional[StageObserver],
+    max_reviews: int,
+) -> List[str]:
+    """Loop on reviewer feedback by appending their prompts to the planning chat."""
+
+    if reviewer is None or max_reviews <= 0:
+        return steps
+
+    current_plan = list(steps)
+    for iteration in range(1, max_reviews + 1):
+        feedback = reviewer(current_plan, iteration)
+        if not feedback or not feedback.strip():
+            break
+        cleaned = feedback.strip()
+        _emit(
+            observer,
+            "plan_feedback",
+            {"iteration": iteration, "feedback": cleaned, "steps": current_plan},
+        )
+        memory.add(Message(role="user", content=f"Reviewer feedback #{iteration}: {cleaned}"))
+        response = llm.generate(memory)
+        memory.add(Message(role="assistant", content=response))
+        revised = _parse_plan(response)
+        if revised:
+            current_plan = revised
+        _emit(observer, "plan_revision", {"iteration": iteration, "steps": current_plan})
+    return current_plan
+
+
 def _format_context(values: Iterable[str]) -> str:
     return "\n".join(f"- {value}" for value in values)
+
+
+def _default_plan() -> List[str]:
+    return ["Investigate the task thoroughly and record findings."]
+
+
+def _ensure_plan(steps: List[str]) -> List[str]:
+    return steps if steps else _default_plan()
 
 
 def _format_list_block(title: str, items: Iterable[str]) -> str:

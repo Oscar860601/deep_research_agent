@@ -48,6 +48,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="Disable printing of intermediate Skywork/Manus workflow artefacts",
     )
+    parser.add_argument(
+        "--review-plan",
+        action="store_true",
+        help="Pause after planning so you can iteratively edit the plan via stdin",
+    )
 
     llm_group = parser.add_mutually_exclusive_group(required=False)
     llm_group.add_argument("--mock", action="store_true", help="Use the offline echo client")
@@ -76,11 +81,34 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     observer = None
     if not args.silent_stages:
+
         def observer(stage: str, payload: dict[str, object]) -> None:
             print(f"[{stage.upper()}]")
             print(json.dumps(payload, ensure_ascii=False, indent=2))
 
-    result = base_agent.run(args.task, context=context_data, observer=observer)
+    plan_reviewer = None
+    if args.review_plan:
+
+        def plan_reviewer(steps: list[str], iteration: int) -> Optional[str]:
+            print("\n[PLAN REVIEW]")
+            if steps:
+                for idx, step in enumerate(steps, 1):
+                    print(f"{idx}. {step}")
+            else:
+                print("(planner returned no structured steps; provide guidance below)")
+            prompt = "Provide revised instructions (blank to accept): "
+            try:
+                feedback = input(prompt)
+            except EOFError:
+                return None
+            return feedback.strip() or None
+
+    result = base_agent.run(
+        args.task,
+        context=context_data,
+        observer=observer,
+        plan_reviewer=plan_reviewer,
+    )
     print(result)
     return 0
 

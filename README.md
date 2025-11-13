@@ -20,6 +20,9 @@ HuggingFace smolagents).
   Skywork DeepResearch outer loop with Manus/OWL stages: mission analysis, plan
   drafting, Manus-style action/observation loops, synthesis, and a final reporting
   pass that leverages the configurable base agent system prompt.
+- **Human-in-the-loop planning** – Pause after the planning cell produces a draft,
+  collect reviewer feedback, and regenerate plans through the same conversation
+  window until everyone signs off.
 - **Tool-aware Manus execution** – Every Manus turn can request real tools
   (web search, URL fetch, notebook) that mirror Skywork/OpenManus pipelines. Tool
   inputs/outputs are logged, folded back into the context blocks, and surfaced to
@@ -117,7 +120,8 @@ python -m dra.cli "Research the latest advancements in quantum error correction"
 
 The CLI streams each stage (analysis, plan, Manus turns, tool executions, synthesis)
 to stdout so you can follow the workflow. Use `--silent-stages` to suppress the
-intermediate artefacts.
+intermediate artefacts. Pass `--review-plan` if you want to pause after the planner
+responds so you can iteratively type new guidance (blank input accepts the plan).
 Replace `--mock` with either `--openai-model gpt-4o-mini` or `--langchain <model>`
 if you have the respective dependencies installed and API credentials configured.
 
@@ -134,6 +138,11 @@ conversation context.
 
 ### Python
 
+`DeepResearchAgent` exposes `generate_plan` and `execute_plan` so you can inspect or
+modify the state between the planning and execution phases. Pass a
+`plan_reviewer` callback to create a conversational approval loop for the plan, or
+call `run` if you prefer a single turnkey entry point.
+
 ```python
 from dra import Agent, AgentConfig, LangChainClient, SystemPrompt
 from dra.research import create_default_deep_research_agent
@@ -146,12 +155,30 @@ agent.base_agent.config = AgentConfig(max_iterations=12, reflection_interval=3)
 def log_stage(stage: str, payload: dict[str, object]) -> None:
     print(f"[{stage}]", payload)
 
-result = agent.run(
+state = agent.generate_plan(
     "Map out the competitive landscape for edge AI accelerators",
     context=["Focus on 2023-2024 announcements"],
     observer=log_stage,
 )
-print(result)
+final_report = agent.execute_plan(state, observer=log_stage)
+print(final_report)
+
+# Or execute everything in one call without inspecting the intermediate state.
+# agent.run(...)
+
+
+def plan_reviewer(steps: list[str], iteration: int) -> str | None:
+    print(f"Reviewer loop #{iteration}: current plan -> {steps}")
+    return input("Feedback (blank to accept): ") or None
+
+state = agent.generate_plan(
+    "Map out the competitive landscape for edge AI accelerators",
+    context=["Focus on 2023-2024 announcements"],
+    observer=log_stage,
+    plan_reviewer=plan_reviewer,
+)
+print(agent.execute_plan(state))
+
 ```
 
 ### Azure OpenAI client
