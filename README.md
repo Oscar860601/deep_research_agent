@@ -35,6 +35,27 @@ pip install -e .
 
 ## Usage
 
+### Default Deep Research prompt
+
+The base agent ships with a mission prompt that blends the Skywork DeepResearch
+outer loop, the InternLM/lagent structure for disciplined actions, and the
+OpenHand / OpenManus OWL interaction model. It instructs the model to:
+
+1. Capture a **Mission Intelligence** brief covering scope, stakeholders, and
+   knowledge gaps.
+2. Draft an **Operation Plan** that sequences Observe/Work/Learn phases with
+   Manus-style actions.
+3. Run **OpenManus OWL execution turns** that log Thought, Action, Observation,
+   Leads, and Status for every step.
+4. Perform **lagent-style cross-checks** to reconcile conflicts and note
+   confidence levels.
+5. Deliver a structured report with Mission Overview, Key Findings (with
+   confidence tags), Evidence Trail, Gaps & Next Steps, and a `FINAL ANSWER`.
+
+You can swap this prompt for another `SystemPrompt` at runtime, but the default
+is designed to closely mimic the prompts published in the Skywork, InternLM, and
+OpenHand/OpenManus projects.
+
 ### CLI
 
 ```bash
