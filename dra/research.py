@@ -10,6 +10,7 @@ from .agent import Agent
 from .llm import LLMClient
 from .memory import Memory, Message
 from .prompts import SystemPrompt, DEFAULT_RESEARCH_PROMPT
+from .tools import Tool, ToolExecutionError, ToolRegistry, create_default_toolbox
 
 
 StageObserver = Callable[[str, dict[str, object]], None]
@@ -24,6 +25,9 @@ class ManusTurn:
     observation: str
     leads: List[str] = field(default_factory=list)
     status: str = "continue"
+    tool_name: Optional[str] = None
+    tool_input: Optional[str] = None
+    tool_output: Optional[str] = None
 
 
 @dataclass
@@ -48,12 +52,16 @@ class ResearchState:
             blocks.append(f"Execution Plan\n{plan_block}")
         if self.turns:
             for idx, turn in enumerate(self.turns, 1):
+                observation = turn.observation.strip()
+                if turn.tool_output:
+                    tool_line = f"Tool {turn.tool_name or '(unknown)'} → {turn.tool_output.strip()}"
+                    observation = f"{observation}\n{tool_line}".strip() if observation else tool_line
                 blocks.append(
                     "Manus Turn #{idx}\nThought: {thought}\nAction: {action}\nObservation: {observation}\nLeads: {leads}\nStatus: {status}".format(
                         idx=idx,
                         thought=turn.thought.strip(),
                         action=turn.action.strip(),
-                        observation=turn.observation.strip(),
+                        observation=observation,
                         leads=", ".join(turn.leads) or "None",
                         status=turn.status,
                     )
@@ -75,6 +83,7 @@ class DeepResearchAgent:
     """Agent tuned to emulate Skywork/Manus/OWL research flows."""
 
     base_agent: Agent
+    tools: Sequence[Tool] = field(default_factory=create_default_toolbox)
     analysis_prompt: SystemPrompt = field(
         default_factory=lambda: SystemPrompt(
             template=(
@@ -109,9 +118,12 @@ class DeepResearchAgent:
                 "Context snippets:\n{context}\n"
                 "Existing leads:\n{leads}\n"
                 "Previous turns:\n{turns}\n"
+                "Available tools:\n{tools}\n"
                 "Respond with a JSON object containing keys 'thought', 'action',"
                 " 'observation', 'leads' (array of strings), and 'status'"
-                " (continue|done)."
+                " (continue|done). Include an optional 'tool' object when you need"
+                " execution: {'name': <tool_name>, 'input': <instruction>}. Set it"
+                " to null if no tool call is required."
             )
         )
     )
@@ -137,6 +149,8 @@ class DeepResearchAgent:
 
         state = ResearchState(task=task, context=list(context or []))
         llm = self.base_agent.llm
+        tool_registry = ToolRegistry(self.tools)
+        tool_block = _format_context(tool_registry.describe()) or "(no registered tools)"
 
         analysis_prompt = self.analysis_prompt.format(
             task=task, context=_format_context(state.context) or "(none)"
@@ -164,9 +178,11 @@ class DeepResearchAgent:
                 context=_format_context(state.context) or "(none)",
                 leads=_format_context(state.leads) or "(none)",
                 turns=_format_turns(state.turns) or "(none yet)",
+                tools=tool_block,
             )
             manus_response = _invoke(llm, manus_prompt, user_message="Return the JSON turn.")
             turn = _parse_manus_turn(manus_response)
+            turn = _maybe_execute_tool(turn, tool_registry, observer)
             state.turns.append(turn)
             _emit(observer, "turn", {"step": step, "turn": asdict(turn)})
             if turn.status.lower().startswith("done"):
@@ -186,9 +202,13 @@ class DeepResearchAgent:
         return self.base_agent.run(task, context=final_context)
 
 
-def create_default_deep_research_agent(llm: LLMClient) -> DeepResearchAgent:
+def create_default_deep_research_agent(
+    llm: LLMClient, *, tools: Sequence[Tool] | None = None
+) -> DeepResearchAgent:
     agent = Agent(llm=llm, system_prompt=DEFAULT_RESEARCH_PROMPT)
-    return DeepResearchAgent(base_agent=agent)
+    if tools is None:
+        return DeepResearchAgent(base_agent=agent)
+    return DeepResearchAgent(base_agent=agent, tools=list(tools))
 
 
 def _invoke(
@@ -235,7 +255,16 @@ def _parse_manus_turn(text: str) -> ManusTurn:
         observation = str(payload.get("observation", "")) or text.strip()
         status = str(payload.get("status", "continue"))
         leads = _normalize_leads(payload.get("leads"))
-        return ManusTurn(thought=thought, action=action, observation=observation, leads=leads, status=status)
+        tool_name, tool_input = _extract_tool_request(payload, action)
+        return ManusTurn(
+            thought=thought,
+            action=action,
+            observation=observation,
+            leads=leads,
+            status=status,
+            tool_name=tool_name,
+            tool_input=tool_input,
+        )
     return ManusTurn(
         thought="Unstructured response",
         action="See observation",
@@ -265,13 +294,48 @@ def _normalize_leads(value: object) -> List[str]:
     return []
 
 
+def _extract_tool_request(payload: dict, action: str) -> tuple[Optional[str], Optional[str]]:
+    tool_payload = payload.get("tool")
+    tool_name: Optional[str] = None
+    tool_input: Optional[str] = None
+    if isinstance(tool_payload, dict):
+        tool_name = str(
+            tool_payload.get("name")
+            or tool_payload.get("tool_name")
+            or tool_payload.get("tool")
+            or ""
+        ).strip() or None
+        tool_input = str(
+            tool_payload.get("input")
+            or tool_payload.get("query")
+            or tool_payload.get("instruction")
+            or ""
+        ).strip() or None
+    elif isinstance(tool_payload, str):
+        tool_name = tool_payload.strip() or None
+    if not tool_name:
+        match = re.search(r"TOOL::([A-Za-z0-9_\-]+)", action)
+        if match:
+            tool_name = match.group(1)
+    return tool_name, tool_input
+
+
 def _format_turns(turns: Sequence[ManusTurn]) -> str:
     if not turns:
         return ""
     parts = []
     for idx, turn in enumerate(turns, 1):
+        tool_segment = ""
+        if turn.tool_name:
+            tool_segment = f"; tool={turn.tool_name}"
+            if turn.tool_output:
+                excerpt = turn.tool_output.strip()
+                if len(excerpt) > 120:
+                    excerpt = f"{excerpt[:117]}..."
+                tool_segment += f" ({excerpt})"
         parts.append(
             f"Turn {idx}: thought={turn.thought}; action={turn.action}; observation={turn.observation}; leads={', '.join(turn.leads) or 'none'}"
+            f"; status={turn.status}{tool_segment}"
         )
     return "\n".join(parts)
 
@@ -279,3 +343,46 @@ def _format_turns(turns: Sequence[ManusTurn]) -> str:
 def _emit(observer: Optional[StageObserver], stage: str, payload: dict[str, object]) -> None:
     if observer:
         observer(stage, payload)
+
+
+def _maybe_execute_tool(
+    turn: ManusTurn,
+    registry: ToolRegistry,
+    observer: Optional[StageObserver],
+) -> ManusTurn:
+    if not turn.tool_name:
+        return turn
+    instruction = turn.tool_input or ""
+    try:
+        result = registry.run(turn.tool_name, instruction)
+    except KeyError:
+        message = f"Tool '{turn.tool_name}' is unavailable."
+        turn.tool_output = message
+        turn.observation = _append_observation(turn.observation, message)
+        _emit(observer, "tool", {"name": turn.tool_name, "input": instruction, "error": message})
+        return turn
+    except ToolExecutionError as exc:
+        message = str(exc)
+        turn.tool_output = message
+        turn.observation = _append_observation(turn.observation, message)
+        _emit(observer, "tool", {"name": turn.tool_name, "input": instruction, "error": message})
+        return turn
+    turn.tool_output = result.output
+    turn.observation = _append_observation(
+        turn.observation, f"Tool output ({turn.tool_name}): {result.output}"
+    )
+    tool_payload: dict[str, object] = {"name": turn.tool_name, "input": instruction, "output": result.output}
+    if result.metadata:
+        tool_payload["metadata"] = dict(result.metadata)
+    _emit(observer, "tool", tool_payload)
+    return turn
+
+
+def _append_observation(existing: str, addition: str) -> str:
+    existing = existing.strip()
+    addition = addition.strip()
+    if not existing:
+        return addition
+    if not addition:
+        return existing
+    return f"{existing}\n{addition}"

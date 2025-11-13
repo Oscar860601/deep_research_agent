@@ -10,6 +10,17 @@ from .research import (
     ResearchState,
     create_default_deep_research_agent,
 )
+from .tools import (
+    CallableTool,
+    NotebookTool,
+    Tool,
+    ToolExecutionError,
+    ToolRegistry,
+    ToolResult,
+    WebPageTool,
+    WebSearchTool,
+    create_default_toolbox,
+)
 
 __all__ = [
     "Agent",
@@ -24,4 +35,13 @@ __all__ = [
     "ManusTurn",
     "ResearchState",
     "create_default_deep_research_agent",
+    "Tool",
+    "ToolExecutionError",
+    "ToolResult",
+    "ToolRegistry",
+    "CallableTool",
+    "WebSearchTool",
+    "WebPageTool",
+    "NotebookTool",
+    "create_default_toolbox",
 ]

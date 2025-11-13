@@ -20,6 +20,10 @@ HuggingFace smolagents).
   Skywork DeepResearch outer loop with Manus/OWL stages: mission analysis, plan
   drafting, Manus-style action/observation loops, synthesis, and a final reporting
   pass that leverages the configurable base agent system prompt.
+- **Tool-aware Manus execution** – Every Manus turn can request real tools
+  (web search, URL fetch, notebook) that mirror Skywork/OpenManus pipelines. Tool
+  inputs/outputs are logged, folded back into the context blocks, and surfaced to
+  observers so downstream systems can audit or replay the workflow.
 - **Customisable prompts** – `dra.prompts.SystemPrompt` makes it easy to swap
   or templatise system prompts at runtime.
 - **Command line interface** – `python -m dra.cli` offers a quick way to execute
@@ -57,6 +61,53 @@ You can always provide another `SystemPrompt`, but the built-in one mirrors the
 multi-stage prompts used in production-grade deep research agents so the outer
 loop works immediately.
 
+### Toolbox
+
+The Deep Research loop now ships with a default toolbox inspired by Skywork's
+DeepResearch, OpenManus, and OWL deployments:
+
+- `web_search` – Performs a DuckDuckGo HTML search and returns the top textual
+  hits (title, URL, snippet) so Manus steps can seed reconnaissance queries.
+- `web_page` – Fetches a URL and extracts the first ~2,000 readable characters to
+  simulate OWL's browsing worker.
+- `notebook` – Executes short Python snippets with math/statistics helpers for
+  quick calculations, parsing, or scoring.
+
+Each Manus JSON turn may include a `"tool"` object:
+
+```json
+{
+  "thought": "Need hard numbers for 2023 shipments",
+  "action": "MANUS::INVESTIGATE – query web for 'RISC-V MCU volume 2023'",
+  "observation": "",
+  "leads": ["Cross-check with IDC 2024 update"],
+  "status": "continue",
+  "tool": {"name": "web_search", "input": "RISC-V MCU volume 2023"}
+}
+```
+
+The framework executes the tool, appends the output to the observation log, and
+emits a `tool` stage event to any observer callback. Tool failures or missing
+registrations are surfaced the same way so users can wire in retriers or alerts.
+
+Custom tools can be registered via `dra.tools.CallableTool` or by passing a list
+into `create_default_deep_research_agent`:
+
+```python
+from dra import CallableTool, create_default_deep_research_agent
+
+def query_vector_store(instruction: str) -> str:
+    return my_vectordb.similarity_search(instruction, k=3)
+
+agent = create_default_deep_research_agent(
+    client,
+    tools=[CallableTool(name="kb_lookup", description="Vector DB", func=query_vector_store)],
+)
+```
+
+Combine your custom list with `dra.tools.create_default_toolbox()` if you still
+want the built-in trio of search/browse/notebook helpers.
+
 ### CLI
 
 ```bash
@@ -64,8 +115,9 @@ python -m dra.cli "Research the latest advancements in quantum error correction"
     --mock
 ```
 
-The CLI streams each stage (analysis, plan, Manus turns, synthesis) to stdout so you
-can follow the workflow. Use `--silent-stages` to suppress the intermediate artefacts.
+The CLI streams each stage (analysis, plan, Manus turns, tool executions, synthesis)
+to stdout so you can follow the workflow. Use `--silent-stages` to suppress the
+intermediate artefacts.
 Replace `--mock` with either `--openai-model gpt-4o-mini` or `--langchain <model>`
 if you have the respective dependencies installed and API credentials configured.
 
