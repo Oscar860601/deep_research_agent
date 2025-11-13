@@ -1,0 +1,7 @@
+# Core runtime dependency for env loading
+python-dotenv>=1.0
+
+# Common LLM adapters supported by the framework
+openai>=1.0
+langchain>=0.1
+langchain-openai>=0.0.8
