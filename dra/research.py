@@ -1,6 +1,7 @@
 """High-level Deep Research workflow orchestration."""
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass, field
 import json
 import re
@@ -11,6 +12,9 @@ from .llm import LLMClient
 from .memory import Memory, Message
 from .prompts import SystemPrompt, DEFAULT_RESEARCH_PROMPT
 from .tools import Tool, ToolExecutionError, ToolRegistry, create_default_toolbox
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 StageObserver = Callable[[str, dict[str, object]], None]
@@ -231,14 +235,16 @@ class DeepResearchAgent:
         plan_reviewer: Optional[PlanReviewHook] = None,
     ) -> str:
         """Execute planning and execution sequentially."""
-
+        LOGGER.info("Deep research run starting for task: %s", task)
         state = self.generate_plan(
             task,
             context=context,
             observer=observer,
             plan_reviewer=plan_reviewer,
         )
-        return self.execute_plan(state, observer=observer)
+        result = self.execute_plan(state, observer=observer)
+        LOGGER.info("Deep research run finished for task: %s", task)
+        return result
 
     def generate_plan(
         self,
@@ -249,13 +255,14 @@ class DeepResearchAgent:
         plan_reviewer: Optional[PlanReviewHook] = None,
     ) -> ResearchState:
         """Run the analysis + planning stages with optional human intervention."""
-
+        LOGGER.info("Generating plan for task: %s", task)
         state = ResearchState(task=task, context=list(context or []))
         llm = self.base_agent.llm
 
         analysis_prompt = self.analysis_prompt.format(
             task=task, context=_format_context(state.context) or "(none)"
         )
+        LOGGER.debug("Requesting analysis from LLM")
         state.analysis = _invoke(llm, analysis_prompt, user_message=task)
         _emit(observer, "analysis", {"analysis": state.analysis})
 
@@ -264,6 +271,7 @@ class DeepResearchAgent:
             analysis=state.analysis.strip() or "(no analysis)",
             context=_format_context(state.context) or "(none)",
         )
+        LOGGER.debug("Requesting initial plan draft from LLM")
         plan_memory = Memory()
         plan_memory.add(Message(role="system", content=planning_prompt))
         plan_memory.add(Message(role="user", content="Draft the plan now."))
@@ -271,6 +279,7 @@ class DeepResearchAgent:
         plan_memory.add(Message(role="assistant", content=plan_response))
         state.plan = _parse_plan(plan_response)
         _emit(observer, "plan", {"steps": state.plan})
+        LOGGER.info("Initial plan produced with %d steps", len(state.plan))
 
         state.plan = _facilitate_plan_review(
             llm,
@@ -282,8 +291,10 @@ class DeepResearchAgent:
         )
 
         if not state.plan:
+            LOGGER.warning("Plan was empty after review; using default fallback plan")
             state.plan = _default_plan()
 
+        LOGGER.info("Planning completed with %d steps", len(state.plan))
         return state
 
     def execute_plan(
@@ -293,13 +304,14 @@ class DeepResearchAgent:
         observer: Optional[StageObserver] = None,
     ) -> str:
         """Run Manus turns, synthesis, and the base agent using an existing plan."""
-
+        LOGGER.info("Executing plan with %d steps", len(state.plan or []))
         llm = self.base_agent.llm
         tool_registry = ToolRegistry(self.tools)
         tool_block = _format_context(tool_registry.describe()) or "(no registered tools)"
         plan_steps = _ensure_plan(state.plan)
 
         for step in plan_steps:
+            LOGGER.debug("Starting Manus step: %s", step)
             manus_prompt = self.manus_prompt.format(
                 task=state.task,
                 step=step,
@@ -315,10 +327,12 @@ class DeepResearchAgent:
             state.turns.append(turn)
             _emit(observer, "turn", {"step": step, "turn": asdict(turn)})
             if turn.status.lower().startswith("done"):
+                LOGGER.info("Manus indicated completion on step: %s", step)
                 break
 
         synthesis_prompt = self.synthesis_prompt.format(task=state.task)
         synthesis_context = state.render_context_blocks()
+        LOGGER.debug("Requesting synthesis from LLM")
         state.synthesis = _invoke(
             llm,
             synthesis_prompt,
@@ -328,6 +342,7 @@ class DeepResearchAgent:
         _emit(observer, "synthesis", {"notes": state.synthesis})
 
         final_context = state.render_context_blocks()
+        LOGGER.info("Handing off to base agent for final response")
         return self.base_agent.run(state.task, context=final_context)
 
 
@@ -372,8 +387,10 @@ def _facilitate_plan_review(
     for iteration in range(1, max_reviews + 1):
         feedback = reviewer(current_plan, iteration)
         if not feedback or not feedback.strip():
+            LOGGER.debug("No reviewer feedback provided on iteration %d", iteration)
             break
         cleaned = feedback.strip()
+        LOGGER.info("Applying reviewer feedback iteration %d", iteration)
         _emit(
             observer,
             "plan_feedback",
@@ -384,6 +401,9 @@ def _facilitate_plan_review(
         memory.add(Message(role="assistant", content=response))
         revised = _parse_plan(response)
         if revised:
+            LOGGER.debug(
+                "Reviewer iteration %d produced %d steps", iteration, len(revised)
+            )
             current_plan = revised
         _emit(observer, "plan_revision", {"iteration": iteration, "steps": current_plan})
     return current_plan
@@ -522,8 +542,10 @@ def _maybe_execute_tool(
     observer: Optional[StageObserver],
 ) -> ManusTurn:
     if not turn.tool_name:
+        LOGGER.debug("No tool requested for current Manus turn")
         return turn
     instruction = turn.tool_input or ""
+    LOGGER.info("Executing tool '%s'", turn.tool_name)
     try:
         result = registry.run(turn.tool_name, instruction)
     except KeyError:
@@ -531,12 +553,14 @@ def _maybe_execute_tool(
         turn.tool_output = message
         turn.observation = _append_observation(turn.observation, message)
         _emit(observer, "tool", {"name": turn.tool_name, "input": instruction, "error": message})
+        LOGGER.error(message)
         return turn
     except ToolExecutionError as exc:
         message = str(exc)
         turn.tool_output = message
         turn.observation = _append_observation(turn.observation, message)
         _emit(observer, "tool", {"name": turn.tool_name, "input": instruction, "error": message})
+        LOGGER.error("Tool '%s' failed: %s", turn.tool_name, message)
         return turn
     turn.tool_output = result.output
     turn.observation = _append_observation(
@@ -546,6 +570,7 @@ def _maybe_execute_tool(
     if result.metadata:
         tool_payload["metadata"] = dict(result.metadata)
     _emit(observer, "tool", tool_payload)
+    LOGGER.debug("Tool '%s' completed", turn.tool_name)
     return turn
 
 

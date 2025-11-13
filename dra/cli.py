@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -10,6 +11,29 @@ from .agent import AgentConfig
 from .llm import EchoClient, LangChainClient, OpenAIClient
 from .prompts import SystemPrompt, DEFAULT_RESEARCH_PROMPT
 from .research import create_default_deep_research_agent
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+def configure_logging(level_name: str, log_file: Optional[str]) -> None:
+    """Configure application-wide logging early in the CLI lifecycle."""
+
+    level = getattr(logging, level_name.upper(), None)
+    if not isinstance(level, int):
+        raise SystemExit(f"Invalid log level: {level_name}")
+
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if log_file:
+        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        handlers=handlers,
+        force=True,
+    )
+    LOGGER.debug("Logging configured: level=%s, log_file=%s", level_name.upper(), log_file)
 
 
 def load_system_prompt(path: Optional[str]) -> SystemPrompt:
@@ -53,6 +77,15 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="Pause after planning so you can iteratively edit the plan via stdin",
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        help="Python logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+    )
+    parser.add_argument(
+        "--log-file",
+        help="Optional path to a log file for capturing verbose traces",
+    )
 
     llm_group = parser.add_mutually_exclusive_group(required=False)
     llm_group.add_argument("--mock", action="store_true", help="Use the offline echo client")
@@ -60,19 +93,30 @@ def main(argv: Optional[list[str]] = None) -> int:
     llm_group.add_argument("--openai-model", help="OpenAI chat completion model name")
 
     args = parser.parse_args(argv)
+    configure_logging(args.log_level, args.log_file)
+    LOGGER.info("Starting Deep Research Agent CLI")
 
     context_data = None
     if args.context:
         context_data = json.loads(Path(args.context).read_text(encoding="utf-8"))
         if not isinstance(context_data, list):
             raise SystemExit("Context JSON must be an array of strings")
+        LOGGER.info("Loaded %d context entries from %s", len(context_data), args.context)
 
     llm_client = build_llm_client(args)
+    LOGGER.info("Selected LLM backend: %s", llm_client.__class__.__name__)
     system_prompt = load_system_prompt(args.system_prompt)
+    if args.system_prompt:
+        LOGGER.info("Using custom system prompt from %s", args.system_prompt)
 
     base_agent_config = AgentConfig(
         max_iterations=args.max_iterations,
         reflection_interval=args.reflection_interval,
+    )
+    LOGGER.debug(
+        "Configured base agent: iterations=%d, reflection_interval=%d",
+        base_agent_config.max_iterations,
+        base_agent_config.reflection_interval,
     )
 
     base_agent = create_default_deep_research_agent(llm_client)
@@ -103,12 +147,14 @@ def main(argv: Optional[list[str]] = None) -> int:
                 return None
             return feedback.strip() or None
 
+    LOGGER.info("Executing task: %s", args.task)
     result = base_agent.run(
         args.task,
         context=context_data,
         observer=observer,
         plan_reviewer=plan_reviewer,
     )
+    LOGGER.info("Task completed")
     print(result)
     return 0
 
